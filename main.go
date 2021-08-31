@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"math"
 	"strings"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -27,6 +28,10 @@ func (p Point) IsInWorld() bool {
 	return p.x >= 0 && p.y >= 0 && int(p.x) < worldWidth && int(p.y) < worldHeight
 }
 
+func (p Point) Distance(t Point) float64 {
+	return math.Sqrt(math.Pow(p.x-t.x, 2) + math.Pow(p.y-t.y, 2))
+}
+
 func (a Point) Lerp(b Point, step float64) Point {
 	return Point{
 		x: lerp(a.x, b.x, step),
@@ -39,7 +44,16 @@ func lerp(start, end, ratio float64) float64 {
 	//return start*(1-ratio) + ratio*end
 }
 
-func Bezier(points ...Point) []Point {
+type Path []Point
+
+func (p Path) Distance() (d float64) {
+	for i := 1; i < len(p); i++ {
+		d += p[i-1].Distance(p[i])
+	}
+	return d
+}
+
+func Bezier(points ...Point) Path {
 	result := []Point{}
 	process := func(p []Point, step float64) []Point {
 		res := make([]Point, len(p)-1)
@@ -84,11 +98,12 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 func (g *Game) White(p Point, layer []byte) {
 	if p.IsInWorld() {
 		p = g.WorldToGame(p)
-		i := int(p.y)*g.width + int(p.x)
-		layer[4*i] = 0xff
-		layer[4*i+1] = 0xff
-		layer[4*i+2] = 0xff
-		layer[4*i+3] = 0xff
+		if i := int(p.y)*g.width + int(p.x); i > 0 && (4*i+3) < len(layer) {
+			layer[4*i] = 0xff
+			layer[4*i+1] = 0xff
+			layer[4*i+2] = 0xff
+			layer[4*i+3] = 0xff
+		}
 	}
 }
 
@@ -100,7 +115,7 @@ func (g *Game) GameToWorld(p Point) Point {
 }
 
 func (g *Game) Line(s Surface, layer []byte) {
-	steps := float64(20)
+	steps := float64(50)
 	for i := float64(0); i < steps; i++ {
 		g.White(Point{lerp(s.a.x, s.b.x, i/steps), lerp(s.a.y, s.b.y, i/steps)}, layer)
 	}
@@ -120,11 +135,19 @@ func (g *Game) Update() error {
 		x, y := ebiten.CursorPosition()
 		controlePoint := g.GameToWorld(Point{float64(x), float64(y)})
 
-		for _, p := range Bezier(
+		deriv := Point{
+			x: 2 * (controlePoint.x - startPoint.x),
+			y: 2 * (controlePoint.y - startPoint.y),
+		}
+
+		g.Line(Surface{a: startPoint, b: Point{x: startPoint.x + deriv.x, y: startPoint.y + deriv.y}}, g.lander)
+		path := Bezier(
 			startPoint,
 			controlePoint,
 			target,
-		) {
+		)
+		fmt.Printf("distance: %.2f\n", path.Distance())
+		for _, p := range path {
 			g.White(p, g.lander)
 		}
 	}
@@ -174,6 +197,7 @@ func main() {
 	fmt.Printf("surfaces: %#v\n", g.world.surfaces)
 	ebiten.SetWindowSize(g.width, g.height)
 	ebiten.SetWindowTitle("Bezier learning with Mars Lander")
+	ebiten.SetMaxTPS(20)
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)
 	}
