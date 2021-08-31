@@ -95,6 +95,9 @@ func (g *Game) White(p Point, layer []byte) {
 func (g *Game) WorldToGame(p Point) Point {
 	return Point{p.x / float64(g.scale), float64(g.height) - p.y/float64(g.scale)}
 }
+func (g *Game) GameToWorld(p Point) Point {
+	return Point{p.x * float64(g.scale), p.y*float64(-g.scale) + float64(worldHeight)}
+}
 
 func (g *Game) Line(s Surface, layer []byte) {
 	steps := float64(20)
@@ -104,6 +107,28 @@ func (g *Game) Line(s Surface, layer []byte) {
 }
 
 func (g *Game) Update() error {
+
+	g.lander = g.emptyLayer()
+
+	{
+		flatSurface := g.world.surfaces[5]
+		target := Point{
+			(flatSurface.a.x + flatSurface.b.x) / 2,
+			flatSurface.a.y,
+		}
+		startPoint := Point{x: 6500, y: 2000}
+		x, y := ebiten.CursorPosition()
+		controlePoint := g.GameToWorld(Point{float64(x), float64(y)})
+
+		for _, p := range Bezier(
+			startPoint,
+			controlePoint,
+			target,
+		) {
+			g.White(p, g.lander)
+		}
+	}
+
 	return nil
 }
 
@@ -146,27 +171,9 @@ func main() {
 	scale := 5
 	g := NewGame(scale)
 
-	{
-		flatSurface := g.world.surfaces[5]
-		target := Point{
-			(flatSurface.a.x + flatSurface.b.x) / 2,
-			flatSurface.a.y,
-		}
-		startPoint := Point{x: 6500, y: 2000}
-		controlePoint := Point{worldWidth / 4, worldHeight}
-
-		for _, p := range Bezier(
-			startPoint,
-			controlePoint,
-			target,
-		) {
-			g.White(p, g.lander)
-		}
-	}
-
 	fmt.Printf("surfaces: %#v\n", g.world.surfaces)
 	ebiten.SetWindowSize(g.width, g.height)
-	ebiten.SetWindowTitle("Bezize learning with Mars Lander")
+	ebiten.SetWindowTitle("Bezier learning with Mars Lander")
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)
 	}
