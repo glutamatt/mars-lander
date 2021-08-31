@@ -1,55 +1,42 @@
 package main
 
 import (
+	"fmt"
 	"log"
-	"math/rand"
-	"time"
+	"strings"
 
 	"github.com/hajimehoshi/ebiten/v2"
 )
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
+const (
+	worldWidth  = 7000
+	worldHeight = 3000
+)
+
+type Surface struct {
+	a, b Point
 }
 
-// World represents the game state.
 type World struct {
-	area   []bool
-	width  int
-	height int
-}
-
-// NewWorld creates a new world.
-func NewWorld(width, height int, maxInitLiveCells int) *World {
-	w := &World{
-		area:   make([]bool, width*height),
-		width:  width,
-		height: height,
-	}
-	return w
-}
-
-func (w *World) Clear() {
-	w.area = make([]bool, w.width*w.height)
-}
-
-func (w *World) Line(x1, y1, x2, y2 float64) {
-	for step := float64(0); step < 1; step += .01 {
-		w.White(int(lerp(x1, x2, step)), int(lerp(y1, y2, step)))
-	}
-}
-
-func lerp(start, end, ratio float64) float64 {
-	return (end-start)*ratio + start
+	surfaces []Surface
 }
 
 type Point struct{ x, y float64 }
+
+func (p Point) IsInWorld() bool {
+	return p.x >= 0 && p.y >= 0 && int(p.x) < worldWidth && int(p.y) < worldHeight
+}
 
 func (a Point) Lerp(b Point, step float64) Point {
 	return Point{
 		x: lerp(a.x, b.x, step),
 		y: lerp(a.y, b.y, step),
 	}
+}
+
+func lerp(start, end, ratio float64) float64 {
+	return (end-start)*ratio + start
+	//return start*(1-ratio) + ratio*end
 }
 
 func Bezier(points ...Point) []Point {
@@ -71,87 +58,135 @@ func Bezier(points ...Point) []Point {
 	return result
 }
 
-func (w *World) Bezier(points ...Point) {
-	for i := len(points) - 1; i > 0; i-- {
-		w.Line(points[i].x, points[i].y, points[i-1].x, points[i-1].y)
-	}
-	for _, p := range Bezier(points...) {
-		w.White(int(p.x), int(p.y))
-	}
-}
-
-func (w *World) White(x, y int) {
-	if i := y*w.width + x; i < len(w.area) && i >= 0 {
-		w.area[y*w.width+x] = true
-	}
-
-}
-
-// Update game state by one tick.
-func (w *World) Update() {
-	x, y := ebiten.CursorPosition()
-	w.Clear()
-	w.Bezier(
-		Point{0, float64(w.height / 2)},
-		Point{float64(w.width) / 2, 0},
-		Point{float64(w.width) / 2, float64(w.height / 2)},
-		Point{float64(x), float64(y)},
-		Point{0, float64(w.height)},
-	)
-
-}
-
-// Draw paints current game state.
-func (w *World) Draw(pix []byte) {
-	for i, v := range w.area {
-		if v {
-			pix[4*i] = 0xff
-			pix[4*i+1] = 0xff
-			pix[4*i+2] = 0xff
-			pix[4*i+3] = 0xff
-		} else {
-			pix[4*i] = 0
-			pix[4*i+1] = 0
-			pix[4*i+2] = 0
-			pix[4*i+3] = 0
-		}
-	}
-}
-
-const (
-	screenWidth  = 320
-	screenHeight = 240
-)
-
 type Game struct {
-	world  *World
-	pixels []byte
-}
-
-func (g *Game) Update() error {
-	g.world.Update()
-	return nil
+	world         World
+	surfaces      []byte
+	lander        []byte
+	width, height int
+	scale         int
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
-	if g.pixels == nil {
-		g.pixels = make([]byte, screenWidth*screenHeight*4)
+	all := g.emptyLayer()
+	copy(all, g.surfaces)
+	for i, p := range g.lander {
+		if p > 0 {
+			all[i] = p
+		}
 	}
-	g.world.Draw(g.pixels)
-	screen.ReplacePixels(g.pixels)
+	screen.ReplacePixels(all)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
-	return screenWidth, screenHeight
+	return g.width, g.height
+}
+
+func (g *Game) White(p Point, layer []byte) {
+	if p.IsInWorld() {
+		p = g.WorldToGame(p)
+		i := int(p.y)*g.width + int(p.x)
+		layer[4*i] = 0xff
+		layer[4*i+1] = 0xff
+		layer[4*i+2] = 0xff
+		layer[4*i+3] = 0xff
+	}
+}
+
+func (g *Game) WorldToGame(p Point) Point {
+	return Point{p.x / float64(g.scale), float64(g.height) - p.y/float64(g.scale)}
+}
+
+func (g *Game) Line(s Surface, layer []byte) {
+	steps := float64(20)
+	for i := float64(0); i < steps; i++ {
+		g.White(Point{lerp(s.a.x, s.b.x, i/steps), lerp(s.a.y, s.b.y, i/steps)}, layer)
+	}
+}
+
+func (g *Game) Update() error {
+	return nil
+}
+
+func (g *Game) emptyLayer() []byte {
+	return make([]byte, 4*g.height*g.width)
+}
+
+func NewGame(scale int) *Game {
+	g := &Game{
+		scale:  scale,
+		width:  worldWidth / scale,
+		height: worldHeight / scale,
+		world:  World{},
+	}
+
+	var prev Point
+	surfaces := strings.Split(surfacesInput, "\n")
+	for i, s := range surfaces {
+		var p Point
+		fmt.Sscanf(s, "%f %f", &p.x, &p.y)
+		if i == 0 {
+			prev = p
+			continue
+		}
+		g.world.surfaces = append(g.world.surfaces, Surface{a: prev, b: p})
+		prev = p
+	}
+
+	g.surfaces = g.emptyLayer()
+	g.lander = g.emptyLayer()
+
+	for _, s := range g.world.surfaces {
+		g.Line(s, g.surfaces)
+	}
+
+	return g
 }
 
 func main() {
-	g := &Game{
-		world: NewWorld(screenWidth, screenHeight, int((screenWidth*screenHeight)/10)),
+	scale := 5
+	g := NewGame(scale)
+
+	{
+		flatSurface := g.world.surfaces[5]
+		target := Point{
+			(flatSurface.a.x + flatSurface.b.x) / 2,
+			flatSurface.a.y,
+		}
+		startPoint := Point{x: 6500, y: 2000}
+		controlePoint := Point{worldWidth / 4, worldHeight}
+
+		for _, p := range Bezier(
+			startPoint,
+			controlePoint,
+			target,
+		) {
+			g.White(p, g.lander)
+		}
 	}
-	ebiten.SetWindowSize(screenWidth*2, screenHeight*2)
-	ebiten.SetWindowTitle("Bezize learning")
+
+	fmt.Printf("surfaces: %#v\n", g.world.surfaces)
+	ebiten.SetWindowSize(g.width, g.height)
+	ebiten.SetWindowTitle("Bezize learning with Mars Lander")
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)
 	}
 }
+
+const surfacesInput = `0 1800
+300 1200
+1000 1550
+2000 1200
+2500 1650
+3700 220
+4700 220
+4750 1000
+4700 1650
+4000 1700
+3700 1600
+3750 1900
+4000 2100
+4900 2050
+5100 1000
+5500 500
+6200 800
+6999 600`
