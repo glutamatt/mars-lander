@@ -39,7 +39,7 @@ func (s Surface) Distance(p Point) float64 {
 	dx := x - p.x
 	dy := y - p.y
 
-	return math.Pow(dx*dx+dy*dy, .5)
+	return math.Sqrt(dx*dx + dy*dy)
 }
 
 type World struct {
@@ -85,13 +85,16 @@ func Bezier(points ...Point) Path {
 		}
 		return res
 	}
-	for step := float64(0); step < 1; step += .01 {
+	steps := 40
+	for i := 0; i < steps; i++ {
+		step := 1.0 / float64(steps) * float64(i)
 		p := process(points, step)
 		for len(p) > 1 {
 			p = process(p, step)
 		}
 		result = append(result, p[0])
 	}
+
 	return result
 }
 
@@ -174,7 +177,7 @@ func (g *Game) Update() error {
 			g.White(p, g.lander)
 
 			for ii, s := range g.world.surfaces {
-				if d := s.Distance(p); d < 50 {
+				if d := s.Distance(p); d < 100 {
 					fmt.Printf("surface %d too close to #%d point (%.0f meters)\n", ii, i, d)
 				}
 
@@ -228,7 +231,7 @@ func main() {
 	fmt.Printf("surfaces: %#v\n", g.world.surfaces)
 	ebiten.SetWindowSize(g.width, g.height)
 	ebiten.SetWindowTitle("Bezier learning with Mars Lander")
-	ebiten.SetMaxTPS(20)
+	ebiten.SetMaxTPS(10)
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)
 	}
