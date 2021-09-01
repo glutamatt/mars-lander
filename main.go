@@ -19,7 +19,6 @@ type Surface struct {
 }
 
 func (s Surface) Distance(p Point) float64 {
-
 	px := s.b.x - s.a.x
 	py := s.b.y - s.a.y
 
@@ -33,13 +32,10 @@ func (s Surface) Distance(p Point) float64 {
 		}
 	}
 
-	x := s.a.x + u*px
-	y := s.a.y + u*py
-
-	dx := x - p.x
-	dy := y - p.y
-
-	return math.Sqrt(dx*dx + dy*dy)
+	return p.Distance(Point{
+		x: s.a.x + u*px,
+		y: s.a.y + u*py,
+	})
 }
 
 type World struct {
@@ -53,7 +49,8 @@ func (p Point) IsInWorld() bool {
 }
 
 func (p Point) Distance(t Point) float64 {
-	return math.Sqrt(math.Pow(p.x-t.x, 2) + math.Pow(p.y-t.y, 2))
+	x, y := p.x-t.x, p.y-t.y
+	return math.Sqrt(x*x + y*y)
 }
 
 func (a Point) Lerp(b Point, step float64) Point {
