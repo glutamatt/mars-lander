@@ -18,6 +18,30 @@ type Surface struct {
 	a, b Point
 }
 
+func (s Surface) Distance(p Point) float64 {
+
+	px := s.b.x - s.a.x
+	py := s.b.y - s.a.y
+
+	norm := px*px + py*py
+	u := ((p.x-s.a.x)*px + (p.y-s.a.y)*py) / norm
+	if u > 1 {
+		u = 1
+	} else {
+		if u < 0 {
+			u = 0
+		}
+	}
+
+	x := s.a.x + u*px
+	y := s.a.y + u*py
+
+	dx := x - p.x
+	dy := y - p.y
+
+	return math.Pow(dx*dx+dy*dy, .5)
+}
+
 type World struct {
 	surfaces []Surface
 }
@@ -41,7 +65,6 @@ func (a Point) Lerp(b Point, step float64) Point {
 
 func lerp(start, end, ratio float64) float64 {
 	return (end-start)*ratio + start
-	//return start*(1-ratio) + ratio*end
 }
 
 type Path []Point
@@ -147,9 +170,17 @@ func (g *Game) Update() error {
 			target,
 		)
 		fmt.Printf("distance: %.2f\n", path.Distance())
-		for _, p := range path {
+		for i, p := range path {
 			g.White(p, g.lander)
+
+			for ii, s := range g.world.surfaces {
+				if d := s.Distance(p); d < 50 {
+					fmt.Printf("surface %d too close to #%d point (%.0f meters)\n", ii, i, d)
+				}
+
+			}
 		}
+
 	}
 
 	return nil
