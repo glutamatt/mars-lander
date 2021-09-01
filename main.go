@@ -144,7 +144,55 @@ func (g *Game) Line(s Surface, layer []byte) {
 	}
 }
 
-func Test() {
+type Brain struct {
+	target Point
+}
+
+var brain Brain
+
+func (b *Brain) Load(g *Game) {
+	var flatSurface Surface
+	for _, s := range g.world.surfaces {
+		if s.a.y == s.b.y {
+			flatSurface = s
+			break
+		}
+	}
+	b.target = Point{
+		(flatSurface.a.x + flatSurface.b.x) / 2,
+		flatSurface.a.y,
+	}
+}
+
+func (b *Brain) DevPath(g *Game) {
+	startPoint := Point{x: 6500, y: 2000}
+	x, y := ebiten.CursorPosition()
+	controlePoint := g.GameToWorld(Point{float64(x), float64(y)})
+
+	{
+		//draw derivative vector at t0
+		deriv := Point{
+			x: 2 * (controlePoint.x - startPoint.x),
+			y: 2 * (controlePoint.y - startPoint.y),
+		}
+		g.Line(Surface{a: startPoint, b: Point{x: startPoint.x + deriv.x, y: startPoint.y + deriv.y}}, g.lander)
+	}
+
+	path := Bezier(
+		startPoint,
+		controlePoint,
+		b.target,
+	)
+	fmt.Printf("distance: %.2f\n", path.Distance())
+	for i, p := range path {
+		g.White(p, g.lander)
+		for ii, s := range g.world.surfaces {
+			if d := s.Distance(p); d < 100 {
+				fmt.Printf("surface %d too close to #%d point (%.0f meters)\n", ii, i, d)
+			}
+
+		}
+	}
 
 }
 
@@ -152,42 +200,7 @@ func (g *Game) Update() error {
 
 	g.lander = g.emptyLayer()
 
-	{
-		flatSurface := g.world.surfaces[5]
-		target := Point{
-			(flatSurface.a.x + flatSurface.b.x) / 2,
-			flatSurface.a.y,
-		}
-		startPoint := Point{x: 6500, y: 2000}
-		x, y := ebiten.CursorPosition()
-		controlePoint := g.GameToWorld(Point{float64(x), float64(y)})
-
-		{
-			//draw derivative vector at t0
-			deriv := Point{
-				x: 2 * (controlePoint.x - startPoint.x),
-				y: 2 * (controlePoint.y - startPoint.y),
-			}
-			g.Line(Surface{a: startPoint, b: Point{x: startPoint.x + deriv.x, y: startPoint.y + deriv.y}}, g.lander)
-		}
-
-		path := Bezier(
-			startPoint,
-			controlePoint,
-			target,
-		)
-		fmt.Printf("distance: %.2f\n", path.Distance())
-		for i, p := range path {
-			g.White(p, g.lander)
-			for ii, s := range g.world.surfaces {
-				if d := s.Distance(p); d < 100 {
-					fmt.Printf("surface %d too close to #%d point (%.0f meters)\n", ii, i, d)
-				}
-
-			}
-		}
-
-	}
+	brain.DevPath(g)
 
 	return nil
 }
@@ -230,7 +243,7 @@ func NewGame(scale int) *Game {
 func main() {
 	scale := 5
 	g := NewGame(scale)
-
+	brain.Load(g)
 	fmt.Printf("surfaces: %#v\n", g.world.surfaces)
 	ebiten.SetWindowSize(g.width, g.height)
 	ebiten.SetWindowTitle("Bezier learning with Mars Lander")
