@@ -144,6 +144,10 @@ func (g *Game) Line(s Surface, layer []byte) {
 	}
 }
 
+func Test() {
+
+}
+
 func (g *Game) Update() error {
 
 	g.lander = g.emptyLayer()
@@ -158,12 +162,15 @@ func (g *Game) Update() error {
 		x, y := ebiten.CursorPosition()
 		controlePoint := g.GameToWorld(Point{float64(x), float64(y)})
 
-		deriv := Point{
-			x: 2 * (controlePoint.x - startPoint.x),
-			y: 2 * (controlePoint.y - startPoint.y),
+		{
+			//draw derivative vector at t0
+			deriv := Point{
+				x: 2 * (controlePoint.x - startPoint.x),
+				y: 2 * (controlePoint.y - startPoint.y),
+			}
+			g.Line(Surface{a: startPoint, b: Point{x: startPoint.x + deriv.x, y: startPoint.y + deriv.y}}, g.lander)
 		}
 
-		g.Line(Surface{a: startPoint, b: Point{x: startPoint.x + deriv.x, y: startPoint.y + deriv.y}}, g.lander)
 		path := Bezier(
 			startPoint,
 			controlePoint,
@@ -172,7 +179,6 @@ func (g *Game) Update() error {
 		fmt.Printf("distance: %.2f\n", path.Distance())
 		for i, p := range path {
 			g.White(p, g.lander)
-
 			for ii, s := range g.world.surfaces {
 				if d := s.Distance(p); d < 100 {
 					fmt.Printf("surface %d too close to #%d point (%.0f meters)\n", ii, i, d)
