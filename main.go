@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -41,6 +42,7 @@ func (s Surface) Distance(p Point) float64 {
 
 type World struct {
 	surfaces []Surface
+	lander   Lander
 }
 
 type Point struct{ x, y float64 }
@@ -146,10 +148,9 @@ func (g *Game) Line(s Surface, layer []byte) {
 }
 
 type Brain struct {
-	lastTime time.Time
-	lander   Lander
-	target   Point
-	tick     time.Ticker
+	cursor Point
+	target Point
+	tick   time.Ticker
 }
 
 type PathFinder struct {
@@ -161,8 +162,7 @@ type PathFinder struct {
 var brain Brain
 
 func (b *Brain) Load(g *Game) {
-	b.tick = *time.NewTicker(time.Second / 4)
-	b.lastTime = time.Now()
+	b.tick = *time.NewTicker(time.Second)
 	var flatSurface Surface
 	for _, s := range g.world.surfaces {
 		if s.a.y == s.b.y {
@@ -175,16 +175,17 @@ func (b *Brain) Load(g *Game) {
 		flatSurface.a.y,
 	}
 
-	b.lander.pos = Point{x: 6500, y: 2000}
-	b.lander.angleDeg = 15
-	b.lander.power = 4
+	g.world.lander.pos = Point{x: 6500, y: 2000}
+	g.world.lander.angleDeg = 0
+	g.world.lander.power = 4
 }
 
 func (b *Brain) DevPath(g *Game) {
 
 	g.lander = g.emptyLayer()
+	landerPos := g.world.lander.pos
 
-	mid := Point{x: b.lander.pos.x + (b.target.x-b.lander.pos.x)/2, y: b.lander.pos.y + (b.target.y-b.lander.pos.y)/2}
+	mid := Point{x: landerPos.x + (b.target.x-landerPos.x)/2, y: landerPos.y + (b.target.y-landerPos.y)/2}
 	pathFinder := PathFinder{
 		done: make(map[Point]struct{}),
 	}
@@ -210,8 +211,7 @@ func (b *Brain) DevPath(g *Game) {
 			}
 		}
 
-		path := Bezier(b.lander.pos, controlePoint, b.target)
-		//g.White(controlePoint, g.lander)
+		path := Bezier(landerPos, controlePoint, b.target)
 		isCrash := false
 		for _, p := range path {
 			if isCrash {
@@ -234,8 +234,16 @@ func (b *Brain) DevPath(g *Game) {
 
 		if !isCrash {
 			pathFinder.found = true
+			{
+				//firstTarget = path[1]
+				//deriv = Point{2 * (controlePoint.x - landerPos.x), 2 * (controlePoint.y - landerPos.y)}
+				//normale = deriv.Normale()
+				//scaleDebuf := .1
+				//g.Line(Surface{a: landerPos, b: Point{landerPos.x + deriv.x*scaleDebuf, landerPos.y + deriv.y*scaleDebuf}}, g.lander)
+			}
+
 			g.White(controlePoint, g.lander)
-			g.White(b.lander.pos, g.lander)
+			g.White(landerPos, g.lander)
 			for _, p := range path {
 				g.White(p, g.lander)
 			}
@@ -243,27 +251,94 @@ func (b *Brain) DevPath(g *Game) {
 	}
 }
 
+func (p Point) Normale() Point {
+	div := math.Sqrt(p.x*p.x + p.y*p.y)
+	return Point{p.x / div, p.y / div}
+}
+
+func (p Point) Angle(b Point) float64 {
+	return math.Atan2(b.y, b.y) - math.Atan2(p.y, p.y)
+}
+
 func (g *Game) Update() error {
 
 	select {
 	case <-brain.tick.C:
-		//brain.DevEngine(g)
-		x, y := ebiten.CursorPosition()
-		mousePos := g.GameToWorld(Point{float64(x), float64(y)})
-		brain.lander.pos = mousePos
+		{
+			x, y := ebiten.CursorPosition()
+			curPos := g.GameToWorld(Point{float64(x), float64(y)})
+
+			if curPos != brain.cursor {
+				brain.cursor = curPos
+				//g.world.lander.pos = curPos
+				g.world.lander.angleDeg = math.Max(-90, math.Min(90, g.world.lander.angleDeg+math.Max(-15, math.Min(15, (g.world.lander.pos.x-curPos.x)*15/1000))))
+				fmt.Printf("current angle: %.0f\n", g.world.lander.angleDeg)
+				if rand.Float32() > .7 {
+					g.world.lander.power = 3
+				} else {
+					g.world.lander.power = 4
+				}
+			}
+		}
 		brain.DevPath(g)
+		//brain.DevPilote(g, target)
 	default:
 
 	}
 
+	g.world.lander.Simulate(time.Second / time.Duration(ebiten.MaxTPS()))
+	g.White(g.world.lander.pos, g.lander)
+
 	return nil
 }
 
-func (b *Brain) DevEngine(g *Game) {
-	now := time.Now()
-	b.lander.Simulate(now.Sub(b.lastTime))
-	g.White(b.lander.pos, g.lander)
-	b.lastTime = now
+func (b *Brain) DevPilote(g *Game, target Point) {
+	type solution struct {
+		power int
+		angle int
+	}
+
+	var best solution
+	minDiff := math.MaxFloat64
+
+	for _, power := range []int{0, 1, 2, 3, 4} {
+		for _, diffAngle := range []int{-15, -12, -10, -8, -5, -2, 0, 2, 5, 8, 10, 12, 15} {
+
+			trying := solution{power: power, angle: diffAngle}
+
+			try := g.world.lander
+			try.angleDeg += float64(diffAngle)
+			try.angleDeg = math.Max(-90, math.Min(90, try.angleDeg))
+			try.power = power
+			try.Simulate(2 * time.Second)
+
+			diff := math.Abs(try.pos.x-target.x) + 100*math.Abs(try.pos.y-target.y)
+
+			//fmt.Printf("trying %#v => diff %.2f\n", trying, diff)
+
+			if diff < minDiff {
+				best = trying
+				minDiff = diff
+			}
+		}
+	}
+
+	//xNorm := pathNorm.x - landerNorm.x
+	//yNorm := pathNorm.y - landerNorm.y
+
+	//powerTarget := math.Max(0, math.Min(4, 4.0*derivPath.y+4))
+	//angleTarget := math.Max(-15, math.Min(15, 15.0*xNorm))
+	g.world.lander.power = best.power
+	g.world.lander.angleDeg = math.Max(-90, math.Min(90, g.world.lander.angleDeg+float64(best.angle)))
+	//g.world.lander.angleDeg = math.Max(-90, math.Min(90, g.world.lander.angleDeg+angleTarget))
+
+	//fmt.Printf("y: derivPath %.1f => power %.2f\n", derivPath.y, powerTarget)
+
+	fmt.Printf("best: %v\n", best)
+	//fmt.Printf("landerNorm: %v\n", landerNorm)
+	//fmt.Printf("diffNorm: %v %v\n", xNorm, yNorm)
+
+	//\nlanderNorm %v target angle %.0f power: %.0f\n", pathNorm, landerNorm, angleTarget, powerTarget)
 }
 
 func (g *Game) emptyLayer() []byte {
@@ -308,7 +383,6 @@ func main() {
 	fmt.Printf("surfaces: %#v\n", g.world.surfaces)
 	ebiten.SetWindowSize(g.width, g.height)
 	ebiten.SetWindowTitle("Bezier learning with Mars Lander")
-	ebiten.SetMaxTPS(10)
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)
 	}
@@ -325,7 +399,7 @@ var gravity = Point{x: 0, y: -3.711}
 
 func (l *Lander) Simulate(t time.Duration) {
 
-	angle := (l.angleDeg + 90) * math.Pi / 180
+	angle := l.angleDeg*math.Pi/180 + math.Pi/2
 
 	power := Point{
 		x: float64(l.power) * math.Cos(angle),
