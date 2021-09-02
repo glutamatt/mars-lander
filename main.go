@@ -5,6 +5,7 @@ import (
 	"log"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 )
@@ -145,12 +146,18 @@ func (g *Game) Line(s Surface, layer []byte) {
 }
 
 type Brain struct {
-	target Point
+	current Point
+	target  Point
+	tick    time.Ticker
+	found   bool
+	done    map[Point]struct{}
+	next    []Point
 }
 
 var brain Brain
 
 func (b *Brain) Load(g *Game) {
+	b.tick = *time.NewTicker(time.Second / 4)
 	var flatSurface Surface
 	for _, s := range g.world.surfaces {
 		if s.a.y == s.b.y {
@@ -162,46 +169,74 @@ func (b *Brain) Load(g *Game) {
 		(flatSurface.a.x + flatSurface.b.x) / 2,
 		flatSurface.a.y,
 	}
+
+	b.current = Point{x: 6500, y: 2000}
+	mid := Point{x: b.current.x + (b.target.x-b.current.x)/2, y: b.current.y + (b.target.y-b.current.y)/2}
+	b.done = make(map[Point]struct{})
+	b.done[mid] = struct{}{}
+	b.next = append(b.next, mid)
 }
 
 func (b *Brain) DevPath(g *Game) {
-	startPoint := Point{x: 6500, y: 2000}
-	x, y := ebiten.CursorPosition()
-	controlePoint := g.GameToWorld(Point{float64(x), float64(y)})
+
+	if b.found || len(b.next) == 0 {
+		return
+	}
+
+	select {
+	case <-b.tick.C:
+	default:
+		return
+	}
+
+	//x, y := ebiten.CursorPosition()
+	//g.GameToWorld(Point{float64(x), float64(y)})
+	controlePoint := b.next[0]
+	g.White(controlePoint, g.lander)
+	b.next = b.next[1:]
 
 	{
 		//draw derivative vector at t0
-		deriv := Point{
-			x: 2 * (controlePoint.x - startPoint.x),
-			y: 2 * (controlePoint.y - startPoint.y),
-		}
-		g.Line(Surface{a: startPoint, b: Point{x: startPoint.x + deriv.x, y: startPoint.y + deriv.y}}, g.lander)
+		//deriv := Point{2 * (controlePoint.x - startPoint.x), 2 * (controlePoint.y - startPoint.y)}
+		//g.Line(Surface{a: startPoint, b: Point{x: startPoint.x + deriv.x, y: startPoint.y + deriv.y}}, g.lander)
 	}
 
-	path := Bezier(
-		startPoint,
-		controlePoint,
-		b.target,
-	)
+	stepMeters := 500.0
+	for _, f := range []func(*Point){
+		func(p *Point) { p.x += stepMeters },
+		func(p *Point) { p.y += stepMeters },
+		func(p *Point) { p.x -= stepMeters },
+		func(p *Point) { p.y -= stepMeters },
+	} {
+		next := controlePoint
+		f(&next)
+		if _, isDone := b.done[next]; !isDone {
+			b.next = append(b.next, next)
+			b.done[next] = struct{}{}
+		}
+	}
+
+	path := Bezier(b.current, controlePoint, b.target)
 	fmt.Printf("distance: %.2f\n", path.Distance())
 	for i, p := range path {
-		g.White(p, g.lander)
+		if p.x < 0 || p.y < 0 || p.x >= worldWidth || p.y > +worldHeight {
+			fmt.Printf("#%d point is out of world\n", i)
+			return
+		}
 		for ii, s := range g.world.surfaces {
 			if d := s.Distance(p); d < 100 {
 				fmt.Printf("surface %d too close to #%d point (%.0f meters)\n", ii, i, d)
+				return
 			}
-
 		}
+		g.White(p, g.lander)
 	}
 
+	b.found = true
 }
 
 func (g *Game) Update() error {
-
-	g.lander = g.emptyLayer()
-
 	brain.DevPath(g)
-
 	return nil
 }
 
