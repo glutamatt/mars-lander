@@ -83,7 +83,7 @@ func Bezier(points ...Point) Path {
 		}
 		return res
 	}
-	steps := 40
+	steps := 50
 	for i := 0; i < steps; i++ {
 		step := 1.0 / float64(steps) * float64(i)
 		p := process(points, step)
@@ -146,18 +146,23 @@ func (g *Game) Line(s Surface, layer []byte) {
 }
 
 type Brain struct {
-	current Point
-	target  Point
-	tick    time.Ticker
-	found   bool
-	done    map[Point]struct{}
-	next    []Point
+	lastTime time.Time
+	lander   Lander
+	target   Point
+	tick     time.Ticker
+}
+
+type PathFinder struct {
+	found bool
+	done  map[Point]struct{}
+	next  []Point
 }
 
 var brain Brain
 
 func (b *Brain) Load(g *Game) {
 	b.tick = *time.NewTicker(time.Second / 4)
+	b.lastTime = time.Now()
 	var flatSurface Surface
 	for _, s := range g.world.surfaces {
 		if s.a.y == s.b.y {
@@ -170,74 +175,95 @@ func (b *Brain) Load(g *Game) {
 		flatSurface.a.y,
 	}
 
-	b.current = Point{x: 6500, y: 2000}
-	mid := Point{x: b.current.x + (b.target.x-b.current.x)/2, y: b.current.y + (b.target.y-b.current.y)/2}
-	b.done = make(map[Point]struct{})
-	b.done[mid] = struct{}{}
-	b.next = append(b.next, mid)
+	b.lander.pos = Point{x: 6500, y: 2000}
+	b.lander.angleDeg = 15
+	b.lander.power = 4
 }
 
 func (b *Brain) DevPath(g *Game) {
 
-	if b.found || len(b.next) == 0 {
-		return
+	g.lander = g.emptyLayer()
+
+	mid := Point{x: b.lander.pos.x + (b.target.x-b.lander.pos.x)/2, y: b.lander.pos.y + (b.target.y-b.lander.pos.y)/2}
+	pathFinder := PathFinder{
+		done: make(map[Point]struct{}),
 	}
+	pathFinder.next = append(pathFinder.next, mid)
+	pathFinder.done[mid] = struct{}{}
 
-	select {
-	case <-b.tick.C:
-	default:
-		return
-	}
+	for !pathFinder.found && len(pathFinder.next) > 0 && len(pathFinder.done) < 100000 {
+		controlePoint := pathFinder.next[0]
+		pathFinder.next = pathFinder.next[1:]
 
-	//x, y := ebiten.CursorPosition()
-	//g.GameToWorld(Point{float64(x), float64(y)})
-	controlePoint := b.next[0]
-	g.White(controlePoint, g.lander)
-	b.next = b.next[1:]
-
-	{
-		//draw derivative vector at t0
-		//deriv := Point{2 * (controlePoint.x - startPoint.x), 2 * (controlePoint.y - startPoint.y)}
-		//g.Line(Surface{a: startPoint, b: Point{x: startPoint.x + deriv.x, y: startPoint.y + deriv.y}}, g.lander)
-	}
-
-	stepMeters := 500.0
-	for _, f := range []func(*Point){
-		func(p *Point) { p.x += stepMeters },
-		func(p *Point) { p.y += stepMeters },
-		func(p *Point) { p.x -= stepMeters },
-		func(p *Point) { p.y -= stepMeters },
-	} {
-		next := controlePoint
-		f(&next)
-		if _, isDone := b.done[next]; !isDone {
-			b.next = append(b.next, next)
-			b.done[next] = struct{}{}
-		}
-	}
-
-	path := Bezier(b.current, controlePoint, b.target)
-	fmt.Printf("distance: %.2f\n", path.Distance())
-	for i, p := range path {
-		if p.x < 0 || p.y < 0 || p.x >= worldWidth || p.y > +worldHeight {
-			fmt.Printf("#%d point is out of world\n", i)
-			return
-		}
-		for ii, s := range g.world.surfaces {
-			if d := s.Distance(p); d < 100 {
-				fmt.Printf("surface %d too close to #%d point (%.0f meters)\n", ii, i, d)
-				return
+		stepMeters := 50.0
+		for _, f := range []func(*Point){
+			func(p *Point) { p.x += stepMeters },
+			func(p *Point) { p.y += stepMeters },
+			func(p *Point) { p.x -= stepMeters },
+			func(p *Point) { p.y -= stepMeters },
+		} {
+			next := controlePoint
+			f(&next)
+			if _, isDone := pathFinder.done[next]; !isDone {
+				pathFinder.next = append(pathFinder.next, next)
+				pathFinder.done[next] = struct{}{}
 			}
 		}
-		g.White(p, g.lander)
-	}
 
-	b.found = true
+		path := Bezier(b.lander.pos, controlePoint, b.target)
+		//g.White(controlePoint, g.lander)
+		isCrash := false
+		for _, p := range path {
+			if isCrash {
+				break
+			}
+			if p.x < 0 || p.y < 0 || p.x >= worldWidth || p.y > +worldHeight {
+				isCrash = true
+				break
+			}
+			for _, s := range g.world.surfaces {
+				if s.a.y == s.b.y {
+					continue
+				}
+				if d := s.Distance(p); d < 100 {
+					isCrash = true
+					break
+				}
+			}
+		}
+
+		if !isCrash {
+			pathFinder.found = true
+			g.White(controlePoint, g.lander)
+			g.White(b.lander.pos, g.lander)
+			for _, p := range path {
+				g.White(p, g.lander)
+			}
+		}
+	}
 }
 
 func (g *Game) Update() error {
-	brain.DevPath(g)
+
+	select {
+	case <-brain.tick.C:
+		//brain.DevEngine(g)
+		x, y := ebiten.CursorPosition()
+		mousePos := g.GameToWorld(Point{float64(x), float64(y)})
+		brain.lander.pos = mousePos
+		brain.DevPath(g)
+	default:
+
+	}
+
 	return nil
+}
+
+func (b *Brain) DevEngine(g *Game) {
+	now := time.Now()
+	b.lander.Simulate(now.Sub(b.lastTime))
+	g.White(b.lander.pos, g.lander)
+	b.lastTime = now
 }
 
 func (g *Game) emptyLayer() []byte {
@@ -286,6 +312,34 @@ func main() {
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)
 	}
+}
+
+type Lander struct {
+	pos      Point
+	speed    Point
+	angleDeg float64
+	power    int
+}
+
+var gravity = Point{x: 0, y: -3.711}
+
+func (l *Lander) Simulate(t time.Duration) {
+
+	angle := (l.angleDeg + 90) * math.Pi / 180
+
+	power := Point{
+		x: float64(l.power) * math.Cos(angle),
+		y: float64(l.power) * math.Sin(angle),
+	}
+
+	l.speed = Point{
+		l.speed.x + power.x + gravity.x,
+		l.speed.y + power.y + gravity.y,
+	}
+
+	sec := t.Seconds()
+	l.pos.x += l.speed.x * sec
+	l.pos.y += l.speed.y * sec
 }
 
 const surfacesInput = `0 1800
