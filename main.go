@@ -19,6 +19,14 @@ type Surface struct {
 	a, b Point
 }
 
+func (s Surface) Dot(v Surface) float64 {
+	return Point{s.b.x - s.a.x, s.b.y - s.a.y}.Dot(Point{v.b.x - v.a.x, v.b.y - v.a.y})
+}
+
+func (p Point) Dot(t Point) float64 {
+	return (p.x)*(t.x) + (p.y)*(t.y)
+}
+
 func (s Surface) Distance(p Point) float64 {
 	px := s.b.x - s.a.x
 	py := s.b.y - s.a.y
@@ -175,18 +183,74 @@ func (b *Brain) Load(g *Game) {
 	}
 
 	g.world.lander.pos = Point{x: 6500, y: 2000}
-	g.world.lander.Command(0, 4)
 }
 
-func (b *Brain) DevPath(g *Game) {
+func (b *Brain) DevCommand(g *Game, targetPoint Point) (int, float64) {
+
+	type Command struct {
+		power int
+		angle float64
+	}
+
+	//bestCommand
+	var best Command
+	bestSimilarity := -1.0
+
+	//	scale := 0.1
+	//	//target := Point{
+	//	//	x: lerp(g.world.lander.pos.x, targetPoint.x, scale),
+	//	//	y: lerp(g.world.lander.pos.y, targetPoint.y, scale),
+	//	//}
+	//	target := Surface{targetPoint, Point{
+	//		x: lerp(g.world.lander.pos.x, targetPoint.x, scale),
+	//		y: lerp(g.world.lander.pos.y, targetPoint.y, scale),
+	//	}}
+
+	//g.Line(target, g.lander)
+
+	vTarget := Point{
+		x: targetPoint.x - g.world.lander.pos.x,
+		y: targetPoint.x - g.world.lander.pos.y,
+	}.Normale()
+
+	g.Line(Surface{Point{vTarget.x + worldWidth/2, vTarget.y + worldHeight/2}, Point{worldWidth / 2, worldHeight / 2}}, g.lander)
+
+	for _, p := range []int{0, 1, 2, 3, 4} {
+		for _, a := range []float64{0, 30, 60, 90, -30, -60, -90, 5, 10, 15, -5, -10, -15} {
+			simul := g.world.lander
+
+			for i := 0; i < 10; i++ {
+				simul.Command(a, p)
+				simul.Physics(time.Second / 5)
+			}
+
+			normaleSpeed := simul.speed.Normale()
+			similarity := vTarget.Dot(normaleSpeed)
+
+			//fmt.Printf("similarity %.3f\n", similarity)
+
+			//fmt.Printf("dist: %.0f for %v\n", dist, Command{p, a})
+			if similarity > bestSimilarity {
+				g.Line(Surface{Point{normaleSpeed.x + worldWidth/2, normaleSpeed.y + worldHeight/2}, Point{worldWidth / 2, worldHeight / 2}}, g.lander)
+				//	println("BETTER")
+				//g.Line(Surface{simul.pos, target}, g.lander)
+				best = Command{p, a}
+				bestSimilarity = similarity
+			}
+		}
+	}
+
+	return best.power, best.angle
+}
+
+func (b *Brain) DevPath(g *Game) Point {
 
 	g.lander = g.emptyLayer()
 	landerPos := g.world.lander.pos
 
-	mid := Point{x: landerPos.x + (b.target.x-landerPos.x)/2, y: landerPos.y + (b.target.y-landerPos.y)/2}
-	pathFinder := PathFinder{
-		done: make(map[Point]struct{}),
-	}
+	mid := Point{x: lerp(landerPos.x, b.target.x, .5), y: lerp(landerPos.y, b.target.y, .5)}
+	g.White(mid, g.lander)
+	pathFinder := PathFinder{done: make(map[Point]struct{})}
 	pathFinder.next = append(pathFinder.next, mid)
 	pathFinder.done[mid] = struct{}{}
 
@@ -209,6 +273,7 @@ func (b *Brain) DevPath(g *Game) {
 			}
 		}
 
+		//g.White(controlePoint, g.lander)
 		path := Bezier(landerPos, controlePoint, b.target)
 		isCrash := false
 		for _, p := range path {
@@ -238,12 +303,15 @@ func (b *Brain) DevPath(g *Game) {
 			for _, p := range path {
 				g.White(p, g.lander)
 			}
+			return controlePoint
 		}
 	}
+
+	return mid
 }
 
 func (p Point) Normale() Point {
-	div := math.Sqrt(p.x*p.x + p.y*p.y)
+	div := math.Sqrt(p.x*p.x+p.y*p.y) / 1000
 	return Point{p.x / div, p.y / div}
 }
 
@@ -265,12 +333,17 @@ func (g *Game) Update() error {
 
 			}
 		}
-		brain.DevPath(g)
+
+		targetPoint := brain.DevPath(g)
+		power, angle := brain.DevCommand(g, targetPoint)
+		fmt.Printf("SET COMMAND power: %d, angle: %f\n", power, angle)
+		g.world.lander.Command(angle, power)
+		fmt.Printf("power %d ; angle %.1f ; speed %v\n", g.world.lander.power, g.world.lander.angleDeg, g.world.lander.speed)
 	default:
 
 	}
 
-	//g.world.lander.Simulate(time.Second / time.Duration(ebiten.MaxTPS()))
+	g.world.lander.Physics(time.Second / time.Duration(ebiten.MaxTPS()))
 	g.White(g.world.lander.pos, g.lander)
 
 	return nil
@@ -330,9 +403,9 @@ type Lander struct {
 	power    int
 }
 
-func (l *Lander) Command(angleDeg float64, power int) {
-	decal := math.Max(-15, math.Min(15, angleDeg-l.angleDeg))
-	l.angleDeg = math.Max(-90, math.Min(90, l.angleDeg+decal))
+func (l *Lander) Command(angle float64, power int) {
+	deltaAngle := math.Max(-15, math.Min(15, angle-l.angleDeg))
+	l.angleDeg = math.Max(-90, math.Min(90, l.angleDeg+deltaAngle))
 
 	if power > l.power && l.power < 4 {
 		l.power++
@@ -344,7 +417,7 @@ func (l *Lander) Command(angleDeg float64, power int) {
 
 var gravity = Point{x: 0, y: -3.711}
 
-func (l *Lander) Simulate(t time.Duration) {
+func (l *Lander) Physics(t time.Duration) {
 
 	angle := l.angleDeg*math.Pi/180 + math.Pi/2
 
@@ -353,12 +426,13 @@ func (l *Lander) Simulate(t time.Duration) {
 		y: float64(l.power) * math.Sin(angle),
 	}
 
+	sec := t.Seconds()
+
 	l.speed = Point{
-		l.speed.x + power.x + gravity.x,
-		l.speed.y + power.y + gravity.y,
+		l.speed.x + (power.x+gravity.x)*sec,
+		l.speed.y + (power.y+gravity.y)*sec,
 	}
 
-	sec := t.Seconds()
 	l.pos.x += l.speed.x * sec
 	l.pos.y += l.speed.y * sec
 }
